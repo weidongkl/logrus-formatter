@@ -37,6 +37,8 @@ func (m Formatter) Format(entry *logrus.Entry) ([]byte, error) {
 	if entry.HasCaller() {
 		output = strings.Replace(output, "%lineno%", strconv.Itoa(entry.Caller.Line), 1)
 		output = strings.Replace(output, "%filename%", entry.Caller.File, 1)
+	} else {
+		output = strings.Replace(output, "[%filename%:%lineno%]", "", 1)
 	}
 	for k, val := range entry.Data {
 		switch v := val.(type) {
