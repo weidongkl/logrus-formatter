@@ -1,7 +1,10 @@
 package formatter
 
 import (
+	"bytes"
+	"fmt"
 	"github.com/sirupsen/logrus"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -17,44 +20,57 @@ type Formatter struct {
 	LogFormat       string
 }
 
-func (m Formatter) Format(entry *logrus.Entry) ([]byte, error) {
-	output := m.LogFormat
-	if output == "" {
-		output = defaultLogFormat
+func (f *Formatter) Format(entry *logrus.Entry) ([]byte, error) {
+	format := f.LogFormat
+	if format == "" {
+		format = defaultLogFormat
+	}
+	timeFormat := f.TimestampFormat
+	if timeFormat == "" {
+		timeFormat = defaultTimestampFormat
 	}
 
-	timestampFormat := m.TimestampFormat
-	if timestampFormat == "" {
-		timestampFormat = defaultTimestampFormat
+	var b bytes.Buffer
+	formatted := format
+
+	// 使用 strings.NewReplacer 预构建替换器提高效率
+	replacer := []string{
+		"%levelname%", strings.ToUpper(entry.Level.String()),
+		"%time%", entry.Time.Format(timeFormat),
+		"%message%", entry.Message,
 	}
 
-	output = strings.Replace(output, "%time%", entry.Time.Format(timestampFormat), 1)
-
-	output = strings.Replace(output, "%message%", entry.Message, 1)
-
-	level := strings.ToUpper(entry.Level.String())
-	output = strings.Replace(output, "%levelname%", level, 1)
 	if entry.HasCaller() {
-		output = strings.Replace(output, "%lineno%", strconv.Itoa(entry.Caller.Line), 1)
-		output = strings.Replace(output, "%filename%", entry.Caller.File, 1)
+		replacer = append(replacer,
+			"%filename%", filepath.Base(entry.Caller.File),
+			"%lineno%", strconv.Itoa(entry.Caller.Line),
+		)
 	} else {
-		output = strings.Replace(output, "[%filename%:%lineno%]", "", 1)
+		// 移除 caller 信息块
+		formatted = removeCallerInfo(formatted)
 	}
-	for k, val := range entry.Data {
-		switch v := val.(type) {
-		case string:
-			output = strings.Replace(output, "%extends%", k+"="+v+" "+"%extends%", 1)
-		case int:
-			s := strconv.Itoa(v)
-			output = strings.Replace(output, "%extends%", k+"="+s+" "+"%extends%", 1)
-		case bool:
-			s := strconv.FormatBool(v)
-			output = strings.Replace(output, "%extends%", k+"="+s+" "+"%extends%", 1)
-		case time.Time:
-			s := v.String()
-			output = strings.Replace(output, "%extends%", k+"="+s+" "+"%extends%", 1)
+
+	r := strings.NewReplacer(replacer...)
+	formatted = r.Replace(formatted)
+
+	// 扩展字段
+	if strings.Contains(formatted, "%extends%") {
+		var extends strings.Builder
+		for k, v := range entry.Data {
+			extends.WriteString(fmt.Sprintf("%s=%v ", k, v))
 		}
+		formatted = strings.ReplaceAll(formatted, "%extends%", extends.String())
 	}
-	output = strings.Replace(output, "%extends%", "", 1)
-	return []byte(output), nil
+
+	b.WriteString(formatted)
+	return b.Bytes(), nil
+}
+
+func removeCallerInfo(s string) string {
+	// 简单移除形如 [%filename%:%lineno%] 的字段
+	start := strings.Index(s, "[%filename%:%lineno%]")
+	if start != -1 {
+		return strings.Replace(s, "[%filename%:%lineno%]", "", 1)
+	}
+	return s
 }
